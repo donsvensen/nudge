@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { supabase } from './supabase'
+import { callFunction, supabase } from './supabase'
 import { DEFAULT_PREFIX, normalizePhone, randomPin } from './phone'
 import { autodeleteLabel, type Channel, type Profile, type Role } from './types'
 
@@ -12,7 +12,7 @@ interface Props {
 }
 
 async function adminCall(body: Record<string, unknown>): Promise<string | null> {
-  const { data, error } = await supabase.functions.invoke('admin-users', { body })
+  const { data, error } = await callFunction<{ error?: string }>('admin-users', body)
   if (!error) return data?.error ? String(data.error) : null
   // On a non-2xx reply the library hides the body; the function's real message is inside error.context.
   try {

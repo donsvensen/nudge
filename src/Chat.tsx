@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { GIPHY_KEY, supabase } from './supabase'
+import { GIPHY_KEY, callFunction, supabase } from './supabase'
 import { autodeleteLabel, isAdmin, type Channel, type Message, type Profile } from './types'
 import GifPicker from './GifPicker'
 
@@ -76,7 +76,7 @@ export default function Chat({ me, channel, people, onBack }: Props) {
       .select('id')
       .single()
     // Fire-and-forget: ask the server to push-notify everyone else. Failures must never block chatting.
-    if (data) supabase.functions.invoke('notify', { body: { message_id: data.id } }).catch(() => {})
+    if (data) callFunction('notify', { message_id: data.id }).catch(() => {})
   }
 
   async function remove(m: Message) {
