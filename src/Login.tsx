@@ -86,7 +86,7 @@ export default function Login() {
       <h1>Nudge</h1>
       <p className="muted">Private chat for friends. Invite only.</p>
       <input type="tel" required placeholder={`Mobile number (${DEFAULT_PREFIX} …)`} value={phone} onChange={(e) => setPhone(e.target.value)} autoComplete="tel" />
-      <input placeholder="Your name (first time only)" value={name} onChange={(e) => setName(e.target.value)} maxLength={40} />
+      <input placeholder="Your name (first time only)" value={name} onChange={(e) => setName(e.target.value)} maxLength={40} required={invite.trim() !== ''} />
       <input placeholder="Invite code (first time only)" value={invite} onChange={(e) => setInvite(e.target.value)} autoCapitalize="none" />
       {error && <p className="error">{error}</p>}
       <button className="primary" disabled={busy}>
