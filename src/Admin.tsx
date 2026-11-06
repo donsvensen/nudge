@@ -13,8 +13,14 @@ interface Props {
 
 async function adminCall(body: Record<string, unknown>): Promise<string | null> {
   const { data, error } = await supabase.functions.invoke('admin-users', { body })
-  if (data?.error) return data.error as string
-  return error ? error.message : null
+  if (!error) return data?.error ? String(data.error) : null
+  // On a non-2xx reply the library hides the body; the function's real message is inside error.context.
+  try {
+    const res = (error as { context?: Response }).context
+    const j = res ? await res.json() : null
+    if (j?.error) return String(j.error)
+  } catch { /* fall back to the generic text */ }
+  return error.message
 }
 
 export default function Admin({ me, people, channels, onChanged, onBack }: Props) {
