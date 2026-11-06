@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { configured, supabase } from './supabase'
-import { autodeleteLabel, isAdmin, type Channel, type Profile } from './types'
+import { autodeleteLabel, isAdmin, type Channel, type Message, type Profile } from './types'
 import { validPin } from './phone'
 import Login from './Login'
 import Chat from './Chat'
@@ -15,6 +15,7 @@ export default function App() {
   const [channels, setChannels] = useState<Channel[]>([])
   const [view, setView] = useState<View>({ name: 'list' })
   const [loaded, setLoaded] = useState(false)
+  const [unread, setUnread] = useState<Record<string, number>>({})
 
   useEffect(() => {
     if (!configured) return setSession(null)
@@ -48,6 +49,59 @@ export default function App() {
     }
   }, [session, load])
 
+  // ───── unread counts ─────
+  const viewRef = useRef(view)
+  useEffect(() => { viewRef.current = view }, [view])
+
+  const refreshUnread = useCallback(async () => {
+    const { data } = await supabase.rpc('unread_counts')
+    const next: Record<string, number> = {}
+    for (const r of (data ?? []) as { channel_id: string; unread: number }[]) next[r.channel_id] = Number(r.unread)
+    setUnread(next)
+  }, [])
+
+  const markRead = useCallback(async (id: string) => {
+    setUnread((u) => (u[id] ? { ...u, [id]: 0 } : u))
+    await supabase.rpc('mark_read', { cid: id })
+  }, [])
+
+  useEffect(() => {
+    if (!session) return
+    refreshUnread()
+    const sub = supabase
+      .channel('unread')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (p) => {
+        const m = p.new as Message
+        if (m.user_id === session.user.id) return
+        const v = viewRef.current
+        if (v.name === 'chat' && v.id === m.channel_id) markRead(m.channel_id)
+        else setUnread((u) => ({ ...u, [m.channel_id]: (u[m.channel_id] ?? 0) + 1 }))
+      })
+      .subscribe()
+    return () => { supabase.removeChannel(sub) }
+  }, [session, refreshUnread, markRead])
+
+  useEffect(() => { if (view.name === 'list' && session) refreshUnread() }, [view.name, session, refreshUnread])
+
+  const total = Object.values(unread).reduce((a, b) => a + b, 0)
+  useEffect(() => {
+    document.title = total ? `(${total}) Nudge` : 'Nudge'
+    const nav = navigator as Navigator & { setAppBadge?: (n?: number) => Promise<void>; clearAppBadge?: () => Promise<void> }
+    try {
+      if (total) nav.setAppBadge?.(total)?.catch(() => {})
+      else nav.clearAppBadge?.()?.catch(() => {})
+    } catch { /* badges are optional */ }
+  }, [total])
+
+  function openChat(id: string) {
+    markRead(id)
+    setView({ name: 'chat', id })
+  }
+  function leaveChat(id: string) {
+    markRead(id)
+    setView({ name: 'list' })
+  }
+
   const map = useMemo(() => new Map(people.map((p) => [p.id, p])), [people])
   const me = session ? map.get(session.user.id) ?? null : null
 
@@ -75,7 +129,7 @@ export default function App() {
 
   if (view.name === 'chat') {
     const ch = channels.find((c) => c.id === view.id)
-    if (ch) return <Chat me={me} channel={ch} people={map} onBack={() => setView({ name: 'list' })} />
+    if (ch) return <Chat me={me} channel={ch} people={map} onBack={() => leaveChat(ch.id)} />
   }
 
   return (
@@ -88,11 +142,12 @@ export default function App() {
       </header>
       <div className="scroll">
         {channels.map((c) => (
-          <button key={c.id} className="channel" onClick={() => setView({ name: 'chat', id: c.id })}>
+          <button key={c.id} className={`channel ${unread[c.id] ? 'unread' : ''}`} onClick={() => openChat(c.id)}>
             <span># {c.name}</span>
-            <span className="tiny muted">
+            <span className="tiny muted row" style={{ padding: 0 }}>
               {c.is_private && '🔒 '}
               {c.autodelete_hours ? `⏳ ${autodeleteLabel(c.autodelete_hours)}` : ''}
+              {unread[c.id] > 0 && <span className="badge">{unread[c.id] > 99 ? '99+' : unread[c.id]}</span>}
             </span>
           </button>
         ))}

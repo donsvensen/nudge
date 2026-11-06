@@ -102,6 +102,9 @@ export default function Admin({ me, people, channels, onChanged, onBack }: Props
         {share && <pre className="share">{share}</pre>}
 
         <h3>Add a friend</h3>
+        <button type="button" className="linkbtn" onClick={() => copy(location.origin, 'App link copied')}>
+          📋 Copy app link <span className="muted tiny">{location.origin.replace(/^https?:\/\//, '')}</span>
+        </button>
         <form onSubmit={addFriend} className="stack" style={{ marginTop: 0 }}>
           <input required placeholder="Name" value={fName} onChange={(e) => setFName(e.target.value)} maxLength={40} />
           <input required type="tel" placeholder={`Mobile number (${DEFAULT_PREFIX} …)`} value={fPhone} onChange={(e) => setFPhone(e.target.value)} />
