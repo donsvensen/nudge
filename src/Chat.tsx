@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { GIPHY_KEY, callFunction, supabase } from './supabase'
 import { autodeleteLabel, isAdmin, type Channel, type Message, type Profile } from './types'
 import GifPicker from './GifPicker'
+import { prepareImage } from './image'
 
 interface Props {
   me: Profile
@@ -24,6 +25,70 @@ export default function Chat({ me, channel, people, onBack }: Props) {
   const [replyTo, setReplyTo] = useState<Message | null>(null)
   const [editing, setEditing] = useState<Message | null>(null)
   const bottom = useRef<HTMLDivElement>(null)
+
+  // ───── photos ─────
+  const [urls, setUrls] = useState<Record<string, string>>({}) // storage path -> temporary signed URL
+  const [uploading, setUploading] = useState(false)
+  const [viewer, setViewer] = useState<string | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const retried = useRef(new Set<string>())
+
+  // The bucket is private, so every photo is shown through a short-lived signed URL.
+  useEffect(() => {
+    const missing = messages.map((m) => m.image_path).filter((p): p is string => !!p && !urls[p])
+    if (!missing.length) return
+    supabase.storage
+      .from('chat-images')
+      .createSignedUrls(missing, 3600)
+      .then(({ data }) => {
+        if (!data) return
+        setUrls((cur) => {
+          const n = { ...cur }
+          for (const d of data) if (d.path && d.signedUrl) n[d.path] = d.signedUrl
+          return n
+        })
+      })
+  }, [messages, urls])
+
+  // A URL may have expired in a long-open app: ask for a fresh one, once.
+  function reloadUrl(path: string) {
+    if (retried.current.has(path)) return
+    retried.current.add(path)
+    setUrls((cur) => {
+      const n = { ...cur }
+      delete n[path]
+      return n
+    })
+  }
+
+  async function sendImage(file: File) {
+    setUploading(true)
+    try {
+      const blob = await prepareImage(file)
+      const path = `${channel.id}/${crypto.randomUUID()}.${blob.type === 'image/gif' ? 'gif' : 'jpg'}`
+      const up = await supabase.storage.from('chat-images').upload(path, blob, { contentType: blob.type })
+      if (up.error) throw up.error
+      const body = text.trim()
+      const reply_to = replyTo?.id ?? null
+      const { data, error } = await supabase
+        .from('messages')
+        .insert({ channel_id: channel.id, user_id: me.id, body, image_path: path, reply_to })
+        .select('id')
+        .single()
+      if (error) {
+        await supabase.storage.from('chat-images').remove([path]) // don't leave an orphan file behind
+        throw error
+      }
+      setText('')
+      setReplyTo(null)
+      if (data) callFunction('notify', { message_id: data.id }).catch(() => {})
+    } catch (e) {
+      alert((e as { message?: string }).message ?? 'Could not send the photo.')
+    } finally {
+      setUploading(false)
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
 
   const addLike = (mid: string, uid: string) =>
     setLikes((cur) => {
@@ -127,7 +192,9 @@ export default function Chat({ me, channel, people, onBack }: Props) {
   }
 
   async function remove(m: Message) {
-    if (confirm('Delete this message?')) await supabase.from('messages').delete().eq('id', m.id)
+    if (!confirm('Delete this message?')) return
+    if (m.image_path) await supabase.storage.from('chat-images').remove([m.image_path])
+    await supabase.from('messages').delete().eq('id', m.id)
   }
 
   async function toggleLike(m: Message) {
@@ -186,9 +253,21 @@ export default function Chat({ me, channel, people, onBack }: Props) {
               >
                 {parent && (
                   <div className="quote">
-                    {people.get(parent.user_id)?.display_name}: {parent.body || 'GIF'}
+                    {people.get(parent.user_id)?.display_name}: {parent.body || (parent.image_path ? '📷 Photo' : 'GIF')}
                   </div>
                 )}
+                {m.image_path &&
+                  (urls[m.image_path] ? (
+                    <img
+                      className="gif photo"
+                      src={urls[m.image_path]}
+                      loading="lazy"
+                      onClick={(e) => { e.stopPropagation(); setViewer(urls[m.image_path!]) }}
+                      onError={() => reloadUrl(m.image_path!)}
+                    />
+                  ) : (
+                    <div className="photo-ph">📷</div>
+                  ))}
                 {m.gif_url && <img className="gif" src={m.gif_url} loading="lazy" />}
                 {m.body && <span>{m.body}</span>}
                 <span className="meta">
@@ -234,12 +313,32 @@ export default function Chat({ me, channel, people, onBack }: Props) {
         </div>
       ) : (
         <form className="composer" onSubmit={(e) => { e.preventDefault(); send() }}>
+          {!editing && (
+            <>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                hidden
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) sendImage(f) }}
+              />
+              <button type="button" className="cam-btn" disabled={uploading} onClick={() => fileRef.current?.click()} aria-label="Send a photo">
+                {uploading ? '…' : '📷'}
+              </button>
+            </>
+          )}
           {GIPHY_KEY && !editing && (
             <button type="button" className="gif-btn" onClick={() => setGifOpen((o) => !o)}>GIF</button>
           )}
           <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Message" maxLength={4000} />
           <button className="primary send" disabled={!text.trim()}>↑</button>
         </form>
+      )}
+
+      {viewer && (
+        <div className="viewer" onClick={() => setViewer(null)}>
+          <img src={viewer} />
+        </div>
       )}
     </div>
   )

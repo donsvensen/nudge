@@ -55,7 +55,7 @@ Deno.serve(async (req) => {
       Deno.env.get('VAPID_PRIVATE_KEY')!,
     )
 
-    const body = msg.body ? String(msg.body).slice(0, 140) : msg.gif_url ? 'Sent a GIF' : 'New message'
+    const body = msg.body ? String(msg.body).slice(0, 140) : msg.image_path ? '📷 Sent a photo' : msg.gif_url ? 'Sent a GIF' : 'New message'
     const payload = JSON.stringify({
       title: `${sender?.display_name ?? 'Someone'} · #${channel.name}`,
       body,

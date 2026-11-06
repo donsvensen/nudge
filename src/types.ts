@@ -22,6 +22,7 @@ export interface Message {
   user_id: string
   body: string
   gif_url: string | null
+  image_path: string | null
   reply_to: string | null
   created_at: string
   edited_at: string | null
