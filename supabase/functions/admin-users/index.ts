@@ -39,6 +39,9 @@ Deno.serve(async (req) => {
       if (!/^\+\d{8,15}$/.test(phone)) return json({ error: 'Phone must look like +4512345678' }, 400)
       if (!name || name.length > 40) return json({ error: 'Name is required (max 40 characters)' }, 400)
       if (!pinOk(body.pin)) return json({ error: 'PIN must be 6–12 digits' }, 400)
+      // Leave a short-lived allow note for the signup trigger (see migration 0007), then create the user.
+      const digits = phone.replace(/^\+/, '')
+      await admin.from('admin_pending').upsert({ phone: digits, created_at: new Date().toISOString() })
       const { data, error } = await admin.auth.admin.createUser({
         phone,
         password: body.pin,
@@ -46,6 +49,7 @@ Deno.serve(async (req) => {
         user_metadata: { display_name: name },
         app_metadata: { nudge_admin_created: true },
       })
+      if (error) await admin.from('admin_pending').delete().eq('phone', digits)
       if (error) return json({ error: /already|registered|exists/i.test(error.message) ? 'That number already has an account' : error.message }, 400)
       return json({ ok: true, id: data.user?.id })
     }
