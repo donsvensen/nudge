@@ -193,8 +193,13 @@ export default function Chat({ me, channel, people, onBack }: Props) {
 
   async function remove(m: Message) {
     if (!confirm('Delete this message?')) return
+    // Delete the message first; .select() lets us notice a refusal that would otherwise be silent.
+    const { data, error } = await supabase.from('messages').delete().eq('id', m.id).select('id')
+    if (error) return alert(`Could not delete the message: ${error.message}`)
+    if (!data?.length) return alert('The message was not deleted. You can only delete your own messages.')
+    setMessages((cur) => cur.filter((x) => x.id !== m.id))
+    // Then remove the photo file (best effort: the message is already gone either way).
     if (m.image_path) await supabase.storage.from('chat-images').remove([m.image_path])
-    await supabase.from('messages').delete().eq('id', m.id)
   }
 
   async function toggleLike(m: Message) {
@@ -273,6 +278,9 @@ export default function Chat({ me, channel, people, onBack }: Props) {
                 <span className="meta">
                   {m.edited_at && 'edited · '}
                   {time(m.created_at)}
+                  {m.image_path && (
+                    <button className="more" aria-label="Message options" onClick={(e) => { e.stopPropagation(); setSelected(open ? null : m.id) }}>⋯</button>
+                  )}
                 </span>
               </div>
               {count > 0 && (

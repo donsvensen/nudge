@@ -32,6 +32,7 @@ details.archive { border-top: 1px solid var(--line); }
 details.archive summary { padding: 14px 16px; color: var(--muted); cursor: pointer; }
 .photo { max-width: 260px; cursor: zoom-in; }
 .photo-ph { width: 200px; height: 140px; display: grid; place-items: center; font-size: 28px; background: rgba(128, 128, 128, .2); border-radius: 12px; }
+.more { padding: 0 6px; margin-left: 4px; font-size: 18px; line-height: 1; color: inherit; opacity: .9; }
 .cam-btn { font-size: 20px; padding: 4px 6px; flex: none; }
 .viewer { position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, .92); display: grid; place-items: center; padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); cursor: zoom-out; }
 .viewer img { max-width: 100%; max-height: 100%; object-fit: contain; }
