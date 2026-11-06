@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { supabase } from './supabase'
+import { DEFAULT_PREFIX, normalizePhone, randomPin } from './phone'
 import { autodeleteLabel, type Channel, type Profile, type Role } from './types'
 
 interface Props {
@@ -10,47 +11,58 @@ interface Props {
   onBack: () => void
 }
 
-interface Invite {
-  code: string
-  uses: number
-  max_uses: number
-  expires_at: string
+async function adminCall(body: Record<string, unknown>): Promise<string | null> {
+  const { data, error } = await supabase.functions.invoke('admin-users', { body })
+  if (data?.error) return data.error as string
+  return error ? error.message : null
 }
 
-const code = () => Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) => 'abcdefghjkmnpqrstuvwxyz23456789'[b % 31]).join('')
-
 export default function Admin({ me, people, channels, onChanged, onBack }: Props) {
-  const [invites, setInvites] = useState<Invite[]>([])
+  const [fName, setFName] = useState('')
+  const [fPhone, setFPhone] = useState('')
+  const [fPin, setFPin] = useState(randomPin())
   const [name, setName] = useState('')
   const [priv, setPriv] = useState(false)
   const [auto, setAuto] = useState('')
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [msg, setMsg] = useState('')
+  const [share, setShare] = useState('')
 
-  const loadInvites = () =>
-    supabase.from('invites').select('*').order('created_at', { ascending: false }).limit(20)
-      .then(({ data }) => setInvites((data ?? []) as Invite[]))
-  useEffect(() => { loadInvites() }, [])
+  async function copy(text: string, ok: string) {
+    try { await navigator.clipboard.writeText(text); setMsg(ok) } catch { setMsg('Copy this manually:') }
+    setShare(text)
+  }
 
-  async function newInvite() {
-    const c = code()
-    const { error } = await supabase.from('invites').insert({ code: c, max_uses: 1 })
-    if (error) return setMsg(error.message)
-    const link = `${location.origin}/?invite=${c}`
-    try { await navigator.clipboard.writeText(link); setMsg('Invite link copied') } catch { setMsg(link) }
-    loadInvites()
+  const invitation = (n: string, phone: string, pin: string) =>
+    `Hi ${n}! Join our chat Nudge: ${location.origin}\nNumber: ${phone}\nPIN: ${pin}\n(Open it in Safari or Chrome, then Share → Add to Home Screen.)`
+
+  async function addFriend(e: React.FormEvent) {
+    e.preventDefault()
+    const phone = normalizePhone(fPhone)
+    const err = await adminCall({ action: 'create', name: fName.trim(), phone, pin: fPin })
+    if (err) return setMsg(err)
+    await copy(invitation(fName.trim(), phone, fPin), `${fName.trim()} added. Message copied, send it to them.`)
+    setFName(''); setFPhone(''); setFPin(randomPin())
+    onChanged()
+  }
+
+  async function resetPin(p: Profile) {
+    const pin = randomPin()
+    const err = await adminCall({ action: 'reset_pin', user_id: p.id, pin })
+    if (err) return setMsg(err)
+    await copy(`New Nudge PIN for ${p.display_name}: ${pin}`, `New PIN for ${p.display_name} copied.`)
+  }
+
+  async function removeMember(p: Profile) {
+    if (!confirm(`Remove ${p.display_name}? Their messages are deleted too.`)) return
+    const err = await adminCall({ action: 'delete', user_id: p.id })
+    setMsg(err ?? `${p.display_name} removed`)
+    onChanged()
   }
 
   async function setRole(id: string, role: Role) {
     const { error } = await supabase.rpc('set_role', { target: id, new_role: role })
     setMsg(error ? error.message : 'Role updated')
-    onChanged()
-  }
-
-  async function removeMember(p: Profile) {
-    if (!confirm(`Remove ${p.display_name}? Their messages are deleted too.`)) return
-    const { error } = await supabase.from('profiles').delete().eq('id', p.id)
-    setMsg(error ? error.message : 'Removed')
     onChanged()
   }
 
@@ -77,6 +89,7 @@ export default function Admin({ me, people, channels, onChanged, onBack }: Props
   }
 
   const isOwner = me.role === 'owner'
+  const canManage = (p: Profile) => p.role !== 'owner' && p.id !== me.id && (isOwner || p.role === 'member')
 
   return (
     <div className="screen">
@@ -86,15 +99,18 @@ export default function Admin({ me, people, channels, onChanged, onBack }: Props
       </header>
       <div className="scroll pad">
         {msg && <p className="notice">{msg}</p>}
+        {share && <pre className="share">{share}</pre>}
 
-        <h3>Invite a friend</h3>
-        <button className="primary" onClick={newInvite}>Create single-use invite link</button>
-        {invites.map((i) => (
-          <div key={i.code} className="row tiny muted">
-            <span className="grow">{i.code}</span>
-            <span>{i.uses}/{i.max_uses} used · expires {new Date(i.expires_at).toLocaleDateString()}</span>
+        <h3>Add a friend</h3>
+        <form onSubmit={addFriend} className="stack" style={{ marginTop: 0 }}>
+          <input required placeholder="Name" value={fName} onChange={(e) => setFName(e.target.value)} maxLength={40} />
+          <input required type="tel" placeholder={`Mobile number (${DEFAULT_PREFIX} …)`} value={fPhone} onChange={(e) => setFPhone(e.target.value)} />
+          <div className="row">
+            <input className="grow" inputMode="numeric" placeholder="PIN (6–12 digits)" value={fPin} onChange={(e) => setFPin(e.target.value.replace(/\D/g, ''))} maxLength={12} />
+            <button type="button" onClick={() => setFPin(randomPin())}>New</button>
           </div>
-        ))}
+          <button className="primary" disabled={fPin.length < 6}>Add friend</button>
+        </form>
 
         <h3>Members</h3>
         {people.map((p) => (
@@ -111,7 +127,8 @@ export default function Admin({ me, people, channels, onChanged, onBack }: Props
             ) : (
               <span className="tag">{p.role}</span>
             )}
-            {p.role === 'member' && <button className="danger" onClick={() => removeMember(p)}>Remove</button>}
+            {canManage(p) && <button onClick={() => resetPin(p)}>New PIN</button>}
+            {canManage(p) && <button className="danger" onClick={() => removeMember(p)}>Remove</button>}
           </div>
         ))}
 
@@ -147,7 +164,7 @@ export default function Admin({ me, people, channels, onChanged, onBack }: Props
           ))}
           <button className="primary">Create channel</button>
         </form>
-        <p className="tiny muted">Auto-delete runs every 15 minutes. Current options: {channels.map((c) => autodeleteLabel(c.autodelete_hours)).filter(Boolean).join(', ') || 'none in use'}.</p>
+        <p className="tiny muted">Auto-delete runs every 15 minutes. In use: {channels.map((c) => autodeleteLabel(c.autodelete_hours)).filter(Boolean).join(', ') || 'none'}.</p>
       </div>
     </div>
   )

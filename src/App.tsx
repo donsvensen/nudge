@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { configured, supabase } from './supabase'
 import { autodeleteLabel, isAdmin, type Channel, type Profile } from './types'
+import { validPin } from './phone'
 import Login from './Login'
 import Chat from './Chat'
 import Admin from './Admin'
@@ -13,6 +14,7 @@ export default function App() {
   const [people, setPeople] = useState<Profile[]>([])
   const [channels, setChannels] = useState<Channel[]>([])
   const [view, setView] = useState<View>({ name: 'list' })
+  const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
     if (!configured) return setSession(null)
@@ -28,10 +30,22 @@ export default function App() {
     ])
     setPeople((p.data ?? []) as Profile[])
     setChannels((c.data ?? []) as Channel[])
+    setLoaded(true)
   }, [])
 
+  async function changePin() {
+    const pin = prompt('Choose a new PIN (6–12 digits)')
+    if (pin === null) return
+    if (!validPin(pin)) return alert('The PIN must be 6–12 digits.')
+    const { error } = await supabase.auth.updateUser({ password: pin })
+    alert(error ? error.message : 'PIN changed.')
+  }
+
   useEffect(() => {
-    if (session) load()
+    if (session) {
+      setLoaded(false)
+      load()
+    }
   }, [session, load])
 
   const map = useMemo(() => new Map(people.map((p) => [p.id, p])), [people])
@@ -46,7 +60,15 @@ export default function App() {
     )
   if (session === undefined) return <div className="center muted">Loading…</div>
   if (!session) return <Login />
-  if (!me) return <div className="center muted">Loading…</div>
+  if (!me && !loaded) return <div className="center muted">Loading…</div>
+  if (!me)
+    return (
+      <div className="center">
+        <h1>Account not found</h1>
+        <p className="muted">Your account may have been removed. Ask an admin.</p>
+        <button className="primary" onClick={() => supabase.auth.signOut()}>Sign out</button>
+      </div>
+    )
 
   if (view.name === 'admin')
     return <Admin me={me} people={people} channels={channels} onChanged={load} onBack={() => setView({ name: 'list' })} />
@@ -61,6 +83,7 @@ export default function App() {
       <header>
         <b className="grow">Nudge</b>
         {isAdmin(me) && <button onClick={() => setView({ name: 'admin' })}>Admin</button>}
+        <button onClick={changePin}>PIN</button>
         <button onClick={() => supabase.auth.signOut()}>Sign out</button>
       </header>
       <div className="scroll">
