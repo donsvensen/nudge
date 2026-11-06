@@ -4,7 +4,7 @@ Private, admin-managed PWA messenger for ~20 friends. React + Vite + Supabase.
 Friends sign in with **phone number + PIN**. No SMS, no email, no third-party providers.
 
 ## Setup
-1. Create a Supabase project. Run the migrations in `supabase/migrations/` in order (0001 → 0005) in the SQL editor
+1. Create a Supabase project. Run the migrations in `supabase/migrations/` in order (0001 → 0006) in the SQL editor
    (enable `pg_cron` under Database → Extensions first if 0001 complains).
 2. **Edge Function:** Dashboard → Edge Functions → *Deploy a new function* → *Via Editor*, name it `admin-users`,
    paste `supabase/functions/admin-users/index.ts`, deploy. (Or `supabase functions deploy admin-users` with the CLI.)
@@ -16,7 +16,13 @@ Friends sign in with **phone number + PIN**. No SMS, no email, no third-party pr
    update auth.users set encrypted_password = extensions.crypt('CHOOSE-A-6-TO-12-DIGIT-PIN', extensions.gen_salt('bf'))
    where phone = '<owner phone without +, e.g. 4512345678>';
    ```
-6. Sign in, open **Admin → Add a friend**: enter name, number and PIN, then send the copied message to them.
+6. **Push notifications (optional):**
+   - `node scripts/make-vapid.mjs https://your-site` writes `vapid.local.json` (git-ignored) and adds `VITE_VAPID_PUBLIC_KEY` to `.env`.
+   - Add `VITE_VAPID_PUBLIC_KEY` as a build variable in Cloudflare too.
+   - Edge Functions → *Deploy a new function* → name `notify` → paste `supabase/functions/notify/index.ts`.
+   - Edge Functions → **Secrets**: add `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` from `vapid.local.json`.
+   - Run migration `0006_push.sql`. Friends then tap **Turn on** on the channel list (iPhone: from the Home Screen app only).
+7. Sign in, open **Admin → Add a friend**: enter name, number and PIN, then send the copied message to them.
 
 ## How it works
 - **Users are created only by admins** through the `admin-users` Edge Function (uses the service-role key server-side).

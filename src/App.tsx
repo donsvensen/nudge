@@ -3,6 +3,7 @@ import type { Session } from '@supabase/supabase-js'
 import { configured, supabase } from './supabase'
 import { autodeleteLabel, isAdmin, type Channel, type Message, type Profile } from './types'
 import { validPin } from './phone'
+import { disablePush, enablePush, pushState, syncPush, type PushState } from './push'
 import Login from './Login'
 import Chat from './Chat'
 import Admin from './Admin'
@@ -93,6 +94,44 @@ export default function App() {
     } catch { /* badges are optional */ }
   }, [total])
 
+  // ───── push notifications ─────
+  const [push, setPush] = useState<PushState>(pushState())
+  useEffect(() => { if (session) syncPush(session.user.id) }, [session])
+
+  async function turnOnPush() {
+    if (session) setPush(await enablePush(session.user.id))
+  }
+  async function signOut() {
+    await disablePush()
+    await supabase.auth.signOut()
+  }
+
+  // Open a channel from a notification tap: cold start via ?channel=…, or a message to the running app.
+  const pendingChannel = useRef<string | null>(new URLSearchParams(location.search).get('channel'))
+  useEffect(() => {
+    const id = pendingChannel.current
+    if (!loaded || !id) return
+    pendingChannel.current = null
+    history.replaceState(null, '', location.pathname)
+    if (channels.some((c) => c.id === id)) {
+      markRead(id)
+      setView({ name: 'chat', id })
+    }
+  }, [loaded, channels, markRead])
+
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      if (e.data?.type !== 'open-url') return
+      const id = new URL(e.data.url, location.origin).searchParams.get('channel')
+      if (id) {
+        markRead(id)
+        setView({ name: 'chat', id })
+      }
+    }
+    navigator.serviceWorker?.addEventListener('message', onMsg)
+    return () => navigator.serviceWorker?.removeEventListener('message', onMsg)
+  }, [markRead])
+
   function openChat(id: string) {
     markRead(id)
     setView({ name: 'chat', id })
@@ -138,9 +177,20 @@ export default function App() {
         <b className="grow">Nudge</b>
         {isAdmin(me) && <button onClick={() => setView({ name: 'admin' })}>Admin</button>}
         <button onClick={changePin}>PIN</button>
-        <button onClick={() => supabase.auth.signOut()}>Sign out</button>
+        <button onClick={signOut}>Sign out</button>
       </header>
       <div className="scroll">
+        {push === 'default' && (
+          <div className="cta">
+            <span className="grow">🔔 Get a ping when friends write</span>
+            <button className="primary" onClick={turnOnPush}>Turn on</button>
+          </div>
+        )}
+        {push === 'needs-install' && (
+          <div className="cta">
+            <span className="grow">🔔 For notifications: Share → Add to Home Screen, then open Nudge from the icon.</span>
+          </div>
+        )}
         {channels.map((c) => (
           <button key={c.id} className={`channel ${unread[c.id] ? 'unread' : ''}`} onClick={() => openChat(c.id)}>
             <span># {c.name}</span>

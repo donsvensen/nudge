@@ -4,3 +4,4 @@ dist
 .env.local
 .claude/
 .mcp.json
+vapid.local.json

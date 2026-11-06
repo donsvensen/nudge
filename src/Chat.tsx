@@ -70,13 +70,13 @@ export default function Chat({ me, channel, people, onBack }: Props) {
     setGifOpen(false)
     const reply_to = replyTo?.id ?? null
     setReplyTo(null)
-    await supabase.from('messages').insert({
-      channel_id: channel.id,
-      user_id: me.id,
-      body,
-      gif_url: gif ?? null,
-      reply_to,
-    })
+    const { data } = await supabase
+      .from('messages')
+      .insert({ channel_id: channel.id, user_id: me.id, body, gif_url: gif ?? null, reply_to })
+      .select('id')
+      .single()
+    // Fire-and-forget: ask the server to push-notify everyone else. Failures must never block chatting.
+    if (data) supabase.functions.invoke('notify', { body: { message_id: data.id } }).catch(() => {})
   }
 
   async function remove(m: Message) {
