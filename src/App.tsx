@@ -26,12 +26,14 @@ export default function App() {
   }, [])
 
   const load = useCallback(async () => {
-    const [p, c] = await Promise.all([
+    const [p, c0] = await Promise.all([
       supabase.from('profiles').select('*').order('display_name'),
-      supabase.from('channels').select('*').order('name'),
+      supabase.from('channels').select('*').order('position').order('name'),
     ])
+    // Fallback so the app still works before migration 0008 (position/archived columns) has been run.
+    const c = c0.error ? await supabase.from('channels').select('*').order('name') : c0
     setPeople((p.data ?? []) as Profile[])
-    setChannels((c.data ?? []) as Channel[])
+    setChannels(((c.data ?? []) as Channel[]).map((ch, i) => ({ ...ch, position: ch.position ?? i, archived: ch.archived ?? false })))
     setLoaded(true)
   }, [])
 
@@ -84,7 +86,19 @@ export default function App() {
 
   useEffect(() => { if (view.name === 'list' && session) refreshUnread() }, [view.name, session, refreshUnread])
 
-  const total = Object.values(unread).reduce((a, b) => a + b, 0)
+  // Pick up changes made by others (new/renamed/archived channels, new friends) when the app comes back to the front.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && session) {
+        load()
+        refreshUnread()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [session, load, refreshUnread])
+
+  const total = channels.filter((c) => !c.archived).reduce((a, c) => a + (unread[c.id] ?? 0), 0)
   useEffect(() => {
     document.title = total ? `(${total}) Nudge` : 'Nudge'
     const nav = navigator as Navigator & { setAppBadge?: (n?: number) => Promise<void>; clearAppBadge?: () => Promise<void> }
@@ -171,6 +185,9 @@ export default function App() {
     if (ch) return <Chat me={me} channel={ch} people={map} onBack={() => leaveChat(ch.id)} />
   }
 
+  const activeChannels = channels.filter((c) => !c.archived)
+  const archivedChannels = channels.filter((c) => c.archived)
+
   return (
     <div className="screen">
       <header>
@@ -191,7 +208,7 @@ export default function App() {
             <span className="grow">🔔 For notifications: Share → Add to Home Screen, then open Nudge from the icon.</span>
           </div>
         )}
-        {channels.map((c) => (
+        {activeChannels.map((c) => (
           <button key={c.id} className={`channel ${unread[c.id] ? 'unread' : ''}`} onClick={() => openChat(c.id)}>
             <span># {c.name}</span>
             <span className="tiny muted row" style={{ padding: 0 }}>
@@ -201,6 +218,16 @@ export default function App() {
             </span>
           </button>
         ))}
+        {archivedChannels.length > 0 && (
+          <details className="archive">
+            <summary>🗄 Archive ({archivedChannels.length})</summary>
+            {archivedChannels.map((c) => (
+              <button key={c.id} className="channel" onClick={() => openChat(c.id)}>
+                <span className="muted"># {c.name}</span>
+              </button>
+            ))}
+          </details>
+        )}
         <p className="tiny muted pad">
           Signed in as {me.display_name}{me.role !== 'member' ? ` (${me.role})` : ''} · {people.length} friends
         </p>

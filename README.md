@@ -4,7 +4,7 @@ Private, admin-managed PWA messenger for ~20 friends. React + Vite + Supabase.
 Friends sign in with **phone number + PIN**. No SMS, no email, no third-party providers.
 
 ## Setup
-1. Create a Supabase project. Run the migrations in `supabase/migrations/` in order (0001 → 0007) in the SQL editor
+1. Create a Supabase project. Run the migrations in `supabase/migrations/` in order (0001 → 0008) in the SQL editor
    (enable `pg_cron` under Database → Extensions first if 0001 complains).
 2. **Edge Function:** Dashboard → Edge Functions → *Deploy a new function* → *Via Editor*, name it `admin-users`,
    paste `supabase/functions/admin-users/index.ts`, deploy. (Or `supabase functions deploy admin-users` with the CLI.)

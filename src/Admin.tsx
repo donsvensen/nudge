@@ -76,7 +76,13 @@ export default function Admin({ me, people, channels, onChanged, onBack }: Props
     e.preventDefault()
     const { data, error } = await supabase
       .from('channels')
-      .insert({ name: name.trim(), is_private: priv, autodelete_hours: auto ? Number(auto) : null, created_by: me.id })
+      .insert({
+        name: name.trim(),
+        is_private: priv,
+        autodelete_hours: auto ? Number(auto) : null,
+        created_by: me.id,
+        position: channels.reduce((m, c) => Math.max(m, c.position), 0) + 1, // new channels go last
+      })
       .select()
       .single()
     if (error) return setMsg(error.message)
@@ -86,6 +92,34 @@ export default function Admin({ me, people, channels, onChanged, onBack }: Props
     }
     setName(''); setPriv(false); setAuto(''); setPicked(new Set())
     setMsg('Channel created')
+    onChanged()
+  }
+
+  const active = channels.filter((c) => !c.archived)
+  const archived = channels.filter((c) => c.archived)
+
+  async function move(i: number, d: -1 | 1) {
+    const ids = active.map((c) => c.id)
+    const j = i + d
+    if (j < 0 || j >= ids.length) return
+    ;[ids[i], ids[j]] = [ids[j], ids[i]]
+    const { error } = await supabase.rpc('reorder_channels', { ids })
+    if (error) setMsg(error.message)
+    onChanged()
+  }
+
+  async function rename(c: Channel) {
+    const n = prompt('New channel name', c.name)?.trim()
+    if (!n || n === c.name) return
+    const { error } = await supabase.from('channels').update({ name: n }).eq('id', c.id)
+    setMsg(error ? (/duplicate|unique/i.test(error.message) ? 'That name is already used' : error.message) : `Renamed to #${n}`)
+    onChanged()
+  }
+
+  async function setArchived(c: Channel, value: boolean) {
+    if (value && !confirm(`Archive #${c.name}? It becomes read-only and moves to the Archive. You can restore it later.`)) return
+    const { error } = await supabase.from('channels').update({ archived: value }).eq('id', c.id)
+    setMsg(error ? error.message : value ? `#${c.name} archived` : `#${c.name} restored`)
     onChanged()
   }
 
@@ -142,17 +176,38 @@ export default function Admin({ me, people, channels, onChanged, onBack }: Props
         ))}
 
         <h3>Channels</h3>
-        {channels.map((c) => (
-          <div key={c.id} className="row">
-            <span className="grow"># {c.name} {c.is_private && '🔒'}</span>
-            <select value={c.autodelete_hours ?? ''} onChange={(e) => setAutodelete(c, e.target.value)}>
-              <option value="">keep forever</option>
-              <option value="24">delete after 1d</option>
-              <option value="168">delete after 7d</option>
-              <option value="720">delete after 30d</option>
-            </select>
+        {active.map((c, i) => (
+          <div key={c.id} className="chcard">
+            <div className="row">
+              <span className="grow"># {c.name} {c.is_private && '🔒'}</span>
+              <button disabled={i === 0} onClick={() => move(i, -1)} aria-label="Move up">↑</button>
+              <button disabled={i === active.length - 1} onClick={() => move(i, 1)} aria-label="Move down">↓</button>
+            </div>
+            <div className="row">
+              <select value={c.autodelete_hours ?? ''} onChange={(e) => setAutodelete(c, e.target.value)}>
+                <option value="">keep forever</option>
+                <option value="24">delete after 1d</option>
+                <option value="168">delete after 7d</option>
+                <option value="720">delete after 30d</option>
+              </select>
+              <span className="grow" />
+              <button onClick={() => rename(c)}>Rename</button>
+              <button onClick={() => setArchived(c, true)}>Archive</button>
+            </div>
           </div>
         ))}
+        {archived.length > 0 && (
+          <>
+            <h4 style={{ marginTop: 16 }}>Archived</h4>
+            {archived.map((c) => (
+              <div key={c.id} className="row">
+                <span className="grow muted"># {c.name}</span>
+                <button onClick={() => rename(c)}>Rename</button>
+                <button onClick={() => setArchived(c, false)}>Restore</button>
+              </div>
+            ))}
+          </>
+        )}
 
         <form onSubmit={addChannel} className="stack">
           <h4>New channel</h4>

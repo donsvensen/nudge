@@ -26,6 +26,10 @@ input.code { text-align: center; font-size: 28px; letter-spacing: 6px; }
 .channel.unread > span:first-child { font-weight: 700; }
 .cta { display: flex; align-items: center; gap: 10px; margin: 12px; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; font-size: 14px; }
 .cta .primary { padding: 8px 14px; flex: none; }
+.chcard { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 2px 12px; margin-bottom: 8px; }
+button:disabled { opacity: .3; cursor: default; }
+details.archive { border-top: 1px solid var(--line); }
+details.archive summary { padding: 14px 16px; color: var(--muted); cursor: pointer; }
 .logo { font-size: 56px; color: var(--accent); line-height: 1; }
 .primary { background: var(--accent); color: #fff; border-radius: 12px; padding: 12px 16px; font-weight: 600; }
 .primary:disabled { opacity: .45; }

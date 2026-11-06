@@ -12,6 +12,8 @@ export interface Channel {
   name: string
   is_private: boolean
   autodelete_hours: number | null
+  position: number
+  archived: boolean
 }
 
 export interface Message {

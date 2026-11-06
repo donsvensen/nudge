@@ -149,13 +149,19 @@ export default function Chat({ me, channel, people, onBack }: Props) {
         </div>
       )}
 
-      <form className="composer" onSubmit={(e) => { e.preventDefault(); send() }}>
-        {GIPHY_KEY && !editing && (
-          <button type="button" className="gif-btn" onClick={() => setGifOpen((o) => !o)}>GIF</button>
-        )}
-        <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Message" maxLength={4000} />
-        <button className="primary send" disabled={!text.trim()}>↑</button>
-      </form>
+      {channel.archived ? (
+        <div className="banner" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 12px)', paddingTop: 12 }}>
+          🗄 This channel is archived and read-only.
+        </div>
+      ) : (
+        <form className="composer" onSubmit={(e) => { e.preventDefault(); send() }}>
+          {GIPHY_KEY && !editing && (
+            <button type="button" className="gif-btn" onClick={() => setGifOpen((o) => !o)}>GIF</button>
+          )}
+          <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Message" maxLength={4000} />
+          <button className="primary send" disabled={!text.trim()}>↑</button>
+        </form>
+      )}
     </div>
   )
 }
