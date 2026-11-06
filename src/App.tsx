@@ -3,6 +3,7 @@ import type { Session } from '@supabase/supabase-js'
 import { configured, supabase } from './supabase'
 import { autodeleteLabel, isAdmin, type Channel, type Message, type Profile } from './types'
 import { validPin } from './phone'
+import { alertDialog, promptDialog } from './dialog'
 import { disablePush, enablePush, pushState, syncPush, type PushState } from './push'
 import Login from './Login'
 import Chat from './Chat'
@@ -38,11 +39,11 @@ export default function App() {
   }, [])
 
   async function changePin() {
-    const pin = prompt('Choose a new PIN (6–12 digits)')
+    const pin = await promptDialog('Choose a new PIN (6–12 digits)', '', true)
     if (pin === null) return
-    if (!validPin(pin)) return alert('The PIN must be 6–12 digits.')
+    if (!validPin(pin)) return alertDialog('The PIN must be 6–12 digits.')
     const { error } = await supabase.auth.updateUser({ password: pin })
-    alert(error ? error.message : 'PIN changed.')
+    alertDialog(error ? error.message : 'PIN changed.')
   }
 
   useEffect(() => {

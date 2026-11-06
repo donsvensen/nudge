@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { callFunction, supabase } from './supabase'
 import { DEFAULT_PREFIX, normalizePhone, randomPin } from './phone'
+import { confirmDialog, promptDialog } from './dialog'
 import { autodeleteLabel, type Channel, type Profile, type Role } from './types'
 
 interface Props {
@@ -60,7 +61,7 @@ export default function Admin({ me, people, channels, onChanged, onBack }: Props
   }
 
   async function removeMember(p: Profile) {
-    if (!confirm(`Remove ${p.display_name}? Their messages are deleted too.`)) return
+    if (!(await confirmDialog(`Remove ${p.display_name}? Their messages are deleted too.`))) return
     const err = await adminCall({ action: 'delete', user_id: p.id })
     setMsg(err ?? `${p.display_name} removed`)
     onChanged()
@@ -109,7 +110,7 @@ export default function Admin({ me, people, channels, onChanged, onBack }: Props
   }
 
   async function rename(c: Channel) {
-    const n = prompt('New channel name', c.name)?.trim()
+    const n = (await promptDialog('New channel name', c.name))?.trim()
     if (!n || n === c.name) return
     const { error } = await supabase.from('channels').update({ name: n }).eq('id', c.id)
     setMsg(error ? (/duplicate|unique/i.test(error.message) ? 'That name is already used' : error.message) : `Renamed to #${n}`)
@@ -117,7 +118,7 @@ export default function Admin({ me, people, channels, onChanged, onBack }: Props
   }
 
   async function setArchived(c: Channel, value: boolean) {
-    if (value && !confirm(`Archive #${c.name}? It becomes read-only and moves to the Archive. You can restore it later.`)) return
+    if (value && !(await confirmDialog(`Archive #${c.name}? It becomes read-only and moves to the Archive. You can restore it later.`))) return
     const { error } = await supabase.from('channels').update({ archived: value }).eq('id', c.id)
     setMsg(error ? error.message : value ? `#${c.name} archived` : `#${c.name} restored`)
     onChanged()

@@ -3,6 +3,7 @@ import { GIPHY_KEY, callFunction, supabase } from './supabase'
 import { autodeleteLabel, isAdmin, type Channel, type Message, type Profile } from './types'
 import GifPicker from './GifPicker'
 import { prepareImage } from './image'
+import { alertDialog, confirmDialog } from './dialog'
 
 interface Props {
   me: Profile
@@ -83,7 +84,7 @@ export default function Chat({ me, channel, people, onBack }: Props) {
       setReplyTo(null)
       if (data) callFunction('notify', { message_id: data.id }).catch(() => {})
     } catch (e) {
-      alert((e as { message?: string }).message ?? 'Could not send the photo.')
+      alertDialog((e as { message?: string }).message ?? 'Could not send the photo.')
     } finally {
       setUploading(false)
       if (fileRef.current) fileRef.current.value = ''
@@ -192,11 +193,11 @@ export default function Chat({ me, channel, people, onBack }: Props) {
   }
 
   async function remove(m: Message) {
-    if (!confirm('Delete this message?')) return
+    if (!(await confirmDialog('Delete this message?'))) return
     // Delete the message first; .select() lets us notice a refusal that would otherwise be silent.
     const { data, error } = await supabase.from('messages').delete().eq('id', m.id).select('id')
-    if (error) return alert(`Could not delete the message: ${error.message}`)
-    if (!data?.length) return alert('The message was not deleted. You can only delete your own messages.')
+    if (error) return alertDialog(`Could not delete the message: ${error.message}`)
+    if (!data?.length) return alertDialog('The message was not deleted. You can only delete your own messages.')
     setMessages((cur) => cur.filter((x) => x.id !== m.id))
     // Then remove the photo file (best effort: the message is already gone either way).
     if (m.image_path) await supabase.storage.from('chat-images').remove([m.image_path])
