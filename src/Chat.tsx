@@ -12,14 +12,17 @@ interface Props {
   onBack: () => void
 }
 
-type Likes = Map<string, Set<string>> // message id -> ids of people who liked it
+type Reactions = Map<string, Map<string, Set<string>>> // message id -> emoji -> ids of people who reacted
+
+const HEART = '❤️'
+const EMOJIS = [HEART, '👍', '😂', '😮', '😢', '🙏'] // must match the database check in migration 0011
 
 const time = (iso: string) =>
   new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
 export default function Chat({ me, channel, people, onBack }: Props) {
   const [messages, setMessages] = useState<Message[]>([])
-  const [likes, setLikes] = useState<Likes>(new Map())
+  const [reactions, setReactions] = useState<Reactions>(new Map())
   const [selected, setSelected] = useState<string | null>(null) // message whose action row is open
   const [text, setText] = useState('')
   const [gifOpen, setGifOpen] = useState(false)
@@ -91,27 +94,32 @@ export default function Chat({ me, channel, people, onBack }: Props) {
     }
   }
 
-  const addLike = (mid: string, uid: string) =>
-    setLikes((cur) => {
+  const addReaction = (mid: string, emoji: string, uid: string) =>
+    setReactions((cur) => {
       const n = new Map(cur)
-      n.set(mid, new Set(n.get(mid)).add(uid))
+      const perMsg = new Map(n.get(mid))
+      perMsg.set(emoji, new Set(perMsg.get(emoji)).add(uid))
+      n.set(mid, perMsg)
       return n
     })
-  const dropLike = (mid: string, uid: string) =>
-    setLikes((cur) => {
-      const s = cur.get(mid)
-      if (!s?.has(uid)) return cur
+  const dropReaction = (mid: string, emoji: string, uid: string) =>
+    setReactions((cur) => {
+      const set = cur.get(mid)?.get(emoji)
+      if (!set?.has(uid)) return cur
       const n = new Map(cur)
-      const s2 = new Set(s)
+      const perMsg = new Map(cur.get(mid))
+      const s2 = new Set(set)
       s2.delete(uid)
-      n.set(mid, s2)
+      if (s2.size) perMsg.set(emoji, s2)
+      else perMsg.delete(emoji)
+      n.set(mid, perMsg)
       return n
     })
 
   useEffect(() => {
     let live = true
     setMessages([])
-    setLikes(new Map())
+    setReactions(new Map())
     setSelected(null)
 
     supabase
@@ -123,17 +131,19 @@ export default function Chat({ me, channel, people, onBack }: Props) {
       .then(({ data }) => live && setMessages(((data ?? []) as Message[]).reverse()))
 
     supabase
-      .from('message_likes')
-      .select('message_id, user_id')
+      .from('message_reactions')
+      .select('message_id, user_id, emoji')
       .eq('channel_id', channel.id)
       .limit(5000)
       .then(({ data }) => {
         if (!live) return
-        const m: Likes = new Map()
-        for (const r of (data ?? []) as { message_id: string; user_id: string }[]) {
-          m.set(r.message_id, (m.get(r.message_id) ?? new Set()).add(r.user_id))
+        const m: Reactions = new Map()
+        for (const r of (data ?? []) as { message_id: string; user_id: string; emoji: string }[]) {
+          const perMsg = m.get(r.message_id) ?? new Map<string, Set<string>>()
+          perMsg.set(r.emoji, (perMsg.get(r.emoji) ?? new Set()).add(r.user_id))
+          m.set(r.message_id, perMsg)
         }
-        setLikes(m)
+        setReactions(m)
       })
 
     const sub = supabase
@@ -150,13 +160,13 @@ export default function Chat({ me, channel, people, onBack }: Props) {
           setMessages((cur) => cur.filter((x) => x.id !== id))
         }
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'message_likes' }, (p) => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'message_reactions' }, (p) => {
         if (p.eventType === 'INSERT') {
-          const r = p.new as { message_id: string; user_id: string; channel_id: string }
-          if (r.channel_id === channel.id) addLike(r.message_id, r.user_id)
+          const r = p.new as { message_id: string; user_id: string; emoji: string; channel_id: string }
+          if (r.channel_id === channel.id) addReaction(r.message_id, r.emoji, r.user_id)
         } else if (p.eventType === 'DELETE') {
-          const r = p.old as { message_id?: string; user_id?: string }
-          if (r.message_id && r.user_id) dropLike(r.message_id, r.user_id)
+          const r = p.old as { message_id?: string; user_id?: string; emoji?: string }
+          if (r.message_id && r.user_id && r.emoji) dropReaction(r.message_id, r.emoji, r.user_id)
         }
       })
       .subscribe()
@@ -203,18 +213,23 @@ export default function Chat({ me, channel, people, onBack }: Props) {
     if (m.image_path) await supabase.storage.from('chat-images').remove([m.image_path])
   }
 
-  async function toggleLike(m: Message) {
+  async function toggleReaction(m: Message, emoji: string) {
     if (channel.archived) return
-    if (likes.get(m.id)?.has(me.id)) {
-      dropLike(m.id, me.id) // optimistic; undo if the server refuses
-      const { error } = await supabase.from('message_likes').delete().eq('message_id', m.id).eq('user_id', me.id)
-      if (error) addLike(m.id, me.id)
-    } else {
-      addLike(m.id, me.id)
+    if (reactions.get(m.id)?.get(emoji)?.has(me.id)) {
+      dropReaction(m.id, emoji, me.id) // optimistic; undo if the server refuses
       const { error } = await supabase
-        .from('message_likes')
-        .insert({ message_id: m.id, user_id: me.id, channel_id: channel.id })
-      if (error) dropLike(m.id, me.id)
+        .from('message_reactions')
+        .delete()
+        .eq('message_id', m.id)
+        .eq('user_id', me.id)
+        .eq('emoji', emoji)
+      if (error) addReaction(m.id, emoji, me.id)
+    } else {
+      addReaction(m.id, emoji, me.id)
+      const { error } = await supabase
+        .from('message_reactions')
+        .insert({ message_id: m.id, user_id: me.id, channel_id: channel.id, emoji })
+      if (error) dropReaction(m.id, emoji, me.id)
     }
   }
 
@@ -239,10 +254,10 @@ export default function Chat({ me, channel, people, onBack }: Props) {
           const prev = messages[i - 1]
           const grouped = prev && prev.user_id === m.user_id && +new Date(m.created_at) - +new Date(prev.created_at) < 5 * 60e3
           const parent = m.reply_to ? byId.get(m.reply_to) : undefined
-          const likers = likes.get(m.id)
-          const count = likers?.size ?? 0
-          const iLike = likers?.has(me.id) ?? false
-          const names = [...(likers ?? [])].map((id) => people.get(id)?.display_name ?? 'Someone').join(', ')
+          const perMsg = reactions.get(m.id)
+          const pills = EMOJIS.filter((e) => perMsg?.get(e)?.size) // emoji that have at least one reaction
+          const whoReacted = (e: string) =>
+            [...(perMsg?.get(e) ?? [])].map((id) => people.get(id)?.display_name ?? 'Someone').join(', ')
           const open = selected === m.id
           return (
             <div key={m.id} className={`msg ${mine ? 'mine' : ''} ${grouped ? 'grouped' : ''} ${open ? 'open' : ''}`}>
@@ -254,7 +269,7 @@ export default function Chat({ me, channel, people, onBack }: Props) {
               <div
                 className="bubble"
                 onClick={() => setSelected(open ? null : m.id)}
-                onDoubleClick={() => toggleLike(m)}
+                onDoubleClick={() => toggleReaction(m, HEART)}
                 onMouseDown={(e) => { if (e.detail > 1) e.preventDefault() }} // no text selection on double-click
               >
                 {parent && (
@@ -284,14 +299,34 @@ export default function Chat({ me, channel, people, onBack }: Props) {
                   )}
                 </span>
               </div>
-              {count > 0 && (
-                <button className={`like ${iLike ? 'on' : ''}`} title={names} disabled={channel.archived} onClick={() => toggleLike(m)}>
-                  {iLike ? '❤️' : '🤍'} {count}
-                </button>
+              {pills.length > 0 && (
+                <div className="reacts">
+                  {pills.map((e) => (
+                    <button
+                      key={e}
+                      className={`like ${perMsg!.get(e)!.has(me.id) ? 'on' : ''}`}
+                      title={whoReacted(e)}
+                      disabled={channel.archived}
+                      onClick={() => toggleReaction(m, e)}
+                    >
+                      {e} {perMsg!.get(e)!.size}
+                    </button>
+                  ))}
+                </div>
               )}
-              {open && count > 0 && <div className="tiny muted likers">❤️ {names}</div>}
+              {open && pills.length > 0 && (
+                <div className="tiny muted likers">{pills.map((e) => `${e} ${whoReacted(e)}`).join('  ·  ')}</div>
+              )}
+              {!channel.archived && (
+                <div className="reactbar">
+                  {EMOJIS.map((e) => (
+                    <button key={e} className={perMsg?.get(e)?.has(me.id) ? 'on' : ''} onClick={() => toggleReaction(m, e)} aria-label={`React ${e}`}>
+                      {e}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="actions">
-                {!channel.archived && <button onClick={() => toggleLike(m)}>{iLike ? 'Unlike' : 'Like'}</button>}
                 <button onClick={() => { setReplyTo(m); setSelected(null) }}>Reply</button>
                 {mine && m.body && (
                   <button onClick={() => { setEditing(m); setText(m.body); setSelected(null) }}>Edit</button>
