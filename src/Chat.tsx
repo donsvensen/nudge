@@ -10,20 +10,44 @@ interface Props {
   onBack: () => void
 }
 
+type Likes = Map<string, Set<string>> // message id -> ids of people who liked it
+
 const time = (iso: string) =>
   new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
 export default function Chat({ me, channel, people, onBack }: Props) {
   const [messages, setMessages] = useState<Message[]>([])
+  const [likes, setLikes] = useState<Likes>(new Map())
+  const [selected, setSelected] = useState<string | null>(null) // message whose action row is open
   const [text, setText] = useState('')
   const [gifOpen, setGifOpen] = useState(false)
   const [replyTo, setReplyTo] = useState<Message | null>(null)
   const [editing, setEditing] = useState<Message | null>(null)
   const bottom = useRef<HTMLDivElement>(null)
 
+  const addLike = (mid: string, uid: string) =>
+    setLikes((cur) => {
+      const n = new Map(cur)
+      n.set(mid, new Set(n.get(mid)).add(uid))
+      return n
+    })
+  const dropLike = (mid: string, uid: string) =>
+    setLikes((cur) => {
+      const s = cur.get(mid)
+      if (!s?.has(uid)) return cur
+      const n = new Map(cur)
+      const s2 = new Set(s)
+      s2.delete(uid)
+      n.set(mid, s2)
+      return n
+    })
+
   useEffect(() => {
     let live = true
     setMessages([])
+    setLikes(new Map())
+    setSelected(null)
+
     supabase
       .from('messages')
       .select('*')
@@ -31,6 +55,20 @@ export default function Chat({ me, channel, people, onBack }: Props) {
       .order('created_at', { ascending: false })
       .limit(200)
       .then(({ data }) => live && setMessages(((data ?? []) as Message[]).reverse()))
+
+    supabase
+      .from('message_likes')
+      .select('message_id, user_id')
+      .eq('channel_id', channel.id)
+      .limit(5000)
+      .then(({ data }) => {
+        if (!live) return
+        const m: Likes = new Map()
+        for (const r of (data ?? []) as { message_id: string; user_id: string }[]) {
+          m.set(r.message_id, (m.get(r.message_id) ?? new Set()).add(r.user_id))
+        }
+        setLikes(m)
+      })
 
     const sub = supabase
       .channel(`msgs-${channel.id}`)
@@ -44,6 +82,15 @@ export default function Chat({ me, channel, people, onBack }: Props) {
         } else if (p.eventType === 'DELETE') {
           const id = (p.old as { id: string }).id
           setMessages((cur) => cur.filter((x) => x.id !== id))
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'message_likes' }, (p) => {
+        if (p.eventType === 'INSERT') {
+          const r = p.new as { message_id: string; user_id: string; channel_id: string }
+          if (r.channel_id === channel.id) addLike(r.message_id, r.user_id)
+        } else if (p.eventType === 'DELETE') {
+          const r = p.old as { message_id?: string; user_id?: string }
+          if (r.message_id && r.user_id) dropLike(r.message_id, r.user_id)
         }
       })
       .subscribe()
@@ -83,6 +130,21 @@ export default function Chat({ me, channel, people, onBack }: Props) {
     if (confirm('Delete this message?')) await supabase.from('messages').delete().eq('id', m.id)
   }
 
+  async function toggleLike(m: Message) {
+    if (channel.archived) return
+    if (likes.get(m.id)?.has(me.id)) {
+      dropLike(m.id, me.id) // optimistic; undo if the server refuses
+      const { error } = await supabase.from('message_likes').delete().eq('message_id', m.id).eq('user_id', me.id)
+      if (error) addLike(m.id, me.id)
+    } else {
+      addLike(m.id, me.id)
+      const { error } = await supabase
+        .from('message_likes')
+        .insert({ message_id: m.id, user_id: me.id, channel_id: channel.id })
+      if (error) dropLike(m.id, me.id)
+    }
+  }
+
   const byId = new Map(messages.map((m) => [m.id, m]))
 
   return (
@@ -104,14 +166,24 @@ export default function Chat({ me, channel, people, onBack }: Props) {
           const prev = messages[i - 1]
           const grouped = prev && prev.user_id === m.user_id && +new Date(m.created_at) - +new Date(prev.created_at) < 5 * 60e3
           const parent = m.reply_to ? byId.get(m.reply_to) : undefined
+          const likers = likes.get(m.id)
+          const count = likers?.size ?? 0
+          const iLike = likers?.has(me.id) ?? false
+          const names = [...(likers ?? [])].map((id) => people.get(id)?.display_name ?? 'Someone').join(', ')
+          const open = selected === m.id
           return (
-            <div key={m.id} className={`msg ${mine ? 'mine' : ''} ${grouped ? 'grouped' : ''}`}>
+            <div key={m.id} className={`msg ${mine ? 'mine' : ''} ${grouped ? 'grouped' : ''} ${open ? 'open' : ''}`}>
               {!mine && !grouped && (
                 <div className="author" style={{ color: author?.avatar_color }}>
                   {author?.display_name ?? 'Someone'}
                 </div>
               )}
-              <div className="bubble">
+              <div
+                className="bubble"
+                onClick={() => setSelected(open ? null : m.id)}
+                onDoubleClick={() => toggleLike(m)}
+                onMouseDown={(e) => { if (e.detail > 1) e.preventDefault() }} // no text selection on double-click
+              >
                 {parent && (
                   <div className="quote">
                     {people.get(parent.user_id)?.display_name}: {parent.body || 'GIF'}
@@ -124,10 +196,17 @@ export default function Chat({ me, channel, people, onBack }: Props) {
                   {time(m.created_at)}
                 </span>
               </div>
+              {count > 0 && (
+                <button className={`like ${iLike ? 'on' : ''}`} title={names} disabled={channel.archived} onClick={() => toggleLike(m)}>
+                  {iLike ? '❤️' : '🤍'} {count}
+                </button>
+              )}
+              {open && count > 0 && <div className="tiny muted likers">❤️ {names}</div>}
               <div className="actions">
-                <button onClick={() => setReplyTo(m)}>Reply</button>
+                {!channel.archived && <button onClick={() => toggleLike(m)}>{iLike ? 'Unlike' : 'Like'}</button>}
+                <button onClick={() => { setReplyTo(m); setSelected(null) }}>Reply</button>
                 {mine && m.body && (
-                  <button onClick={() => { setEditing(m); setText(m.body) }}>Edit</button>
+                  <button onClick={() => { setEditing(m); setText(m.body); setSelected(null) }}>Edit</button>
                 )}
                 {(mine || isAdmin(me)) && <button onClick={() => remove(m)}>Delete</button>}
               </div>

@@ -58,7 +58,10 @@ header > button:first-child { font-size: 28px; line-height: 1; }
 .quote { font-size: 13px; opacity: .75; border-left: 3px solid currentColor; padding-left: 8px; }
 .gif { max-width: 240px; width: 100%; border-radius: 12px; }
 .actions { display: none; gap: 2px; }
-.msg:hover .actions, .msg:focus-within .actions { display: flex; }
+.msg:hover .actions, .msg:focus-within .actions, .msg.open .actions { display: flex; }
+.like { font-size: 13px; padding: 2px 9px; margin-top: 3px; border-radius: 99px; background: var(--panel); border: 1px solid var(--line); }
+.like.on { border-color: var(--accent); color: var(--accent); }
+.likers { margin: 2px 8px 0; }
 .actions button { font-size: 12px; color: var(--muted); padding: 4px 8px; }
 @media (hover: none) { .msg:active .actions { display: flex; } }
 
