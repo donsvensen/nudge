@@ -4,6 +4,7 @@ import { configured, supabase } from './supabase'
 import { autodeleteLabel, isAdmin, type Channel, type Message, type Profile } from './types'
 import { validPin } from './phone'
 import { alertDialog, promptDialog } from './dialog'
+import { PullIndicator, usePullToRefresh } from './pull'
 import { disablePush, enablePush, pushState, syncPush, type PushState } from './push'
 import Login from './Login'
 import Chat from './Chat'
@@ -159,6 +160,10 @@ export default function App() {
   const map = useMemo(() => new Map(people.map((p) => [p.id, p])), [people])
   const me = session ? map.get(session.user.id) ?? null : null
 
+  // Pull down on the channel list to reload channels, friends and unread counts.
+  const listRef = useRef<HTMLDivElement>(null)
+  const listPull = usePullToRefresh(listRef, () => Promise.all([load(), refreshUnread()]), !!me && view.name === 'list')
+
   if (!configured)
     return (
       <div className="center">
@@ -197,7 +202,8 @@ export default function App() {
         <button onClick={changePin}>PIN</button>
         <button onClick={signOut}>Sign out</button>
       </header>
-      <div className="scroll">
+      <div className="scroll" ref={listRef}>
+        <PullIndicator {...listPull} />
         {push === 'default' && (
           <div className="cta">
             <span className="grow">🔔 Get a ping when friends write</span>

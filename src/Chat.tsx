@@ -4,6 +4,7 @@ import { autodeleteLabel, isAdmin, type Channel, type Message, type Profile } fr
 import GifPicker from './GifPicker'
 import { prepareImage } from './image'
 import { alertDialog, confirmDialog } from './dialog'
+import { PullIndicator, usePullToRefresh } from './pull'
 
 interface Props {
   me: Profile
@@ -29,6 +30,26 @@ export default function Chat({ me, channel, people, onBack }: Props) {
   const [replyTo, setReplyTo] = useState<Message | null>(null)
   const [editing, setEditing] = useState<Message | null>(null)
   const bottom = useRef<HTMLDivElement>(null)
+
+  // Pull down at the top of the conversation to reload it (messages + reactions).
+  const msgsRef = useRef<HTMLDivElement>(null)
+  const msgPull = usePullToRefresh(msgsRef, refresh)
+  async function refresh() {
+    const [msgs, reacts] = await Promise.all([
+      supabase.from('messages').select('*').eq('channel_id', channel.id).order('created_at', { ascending: false }).limit(200),
+      supabase.from('message_reactions').select('message_id, user_id, emoji').eq('channel_id', channel.id).limit(5000),
+    ])
+    if (msgs.data) setMessages((msgs.data as Message[]).reverse())
+    if (reacts.data) {
+      const m: Reactions = new Map()
+      for (const r of reacts.data as { message_id: string; user_id: string; emoji: string }[]) {
+        const perMsg = m.get(r.message_id) ?? new Map<string, Set<string>>()
+        perMsg.set(r.emoji, (perMsg.get(r.emoji) ?? new Set()).add(r.user_id))
+        m.set(r.message_id, perMsg)
+      }
+      setReactions(m)
+    }
+  }
 
   // ───── photos ─────
   const [urls, setUrls] = useState<Record<string, string>>({}) // storage path -> temporary signed URL
@@ -247,7 +268,8 @@ export default function Chat({ me, channel, people, onBack }: Props) {
         </div>
       </header>
 
-      <div className="messages">
+      <div className="messages" ref={msgsRef}>
+        <PullIndicator {...msgPull} />
         {messages.map((m, i) => {
           const mine = m.user_id === me.id
           const author = people.get(m.user_id)
